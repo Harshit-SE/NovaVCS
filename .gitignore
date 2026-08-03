@@ -1,0 +1,14 @@
+# Build directories
+build/
+bin/
+
+# IDEs and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# NovaVCS specific
+.nova/
+nova_test_repo/
+nova_odb_test/
