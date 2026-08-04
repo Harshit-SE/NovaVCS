@@ -1,10 +1,18 @@
+find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
+
 add_library(nova_core 
     core/repository.cpp 
     core/logger.cpp 
     utils/fs_utils.cpp
     cli/parser.cpp
+    crypto/sha256.cpp
+    storage/compressor.cpp
+    storage/object_db.cpp
 )
+
 target_include_directories(nova_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(nova_core PUBLIC OpenSSL::Crypto ZLIB::ZLIB)
 
 add_executable(nova main.cpp)
 target_link_libraries(nova PRIVATE nova_core)

@@ -14,4 +14,8 @@ include_directories(include)
 
 # Add subdirectories
 add_subdirectory(src)
+
+# --- ADD THIS LINE ---
+enable_testing() 
+
 add_subdirectory(tests)
