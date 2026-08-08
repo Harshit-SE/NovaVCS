@@ -9,6 +9,7 @@ add_library(nova_core
     crypto/sha256.cpp
     storage/compressor.cpp
     storage/object_db.cpp
+    IndexManager.cpp
 )
 
 target_include_directories(nova_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
