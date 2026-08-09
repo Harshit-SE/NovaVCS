@@ -10,7 +10,10 @@ add_library(nova_core
     storage/compressor.cpp
     storage/object_db.cpp
     IndexManager.cpp
+    core/commit.cpp
+    core/commit_graph.cpp
 )
+
 
 target_include_directories(nova_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(nova_core PUBLIC OpenSSL::Crypto ZLIB::ZLIB)

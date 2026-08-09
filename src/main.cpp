@@ -2,7 +2,9 @@
 #include "nova/core/repository.hpp" 
 #include "nova/storage/object_db.hpp" 
 #include "nova/core/logger.hpp"
-#include "IndexManager.hpp" // <-- Phase 3
+#include "nova/crypto/sha256.hpp"
+#include "nova/core/commit_graph.hpp"
+#include "IndexManager.hpp" 
 #include <iostream>
 #include <filesystem>
 #include <fstream>
@@ -14,7 +16,6 @@ int main(int argc, char** argv) {
     // Phase 1: init
     cli.registerCommand("init", [](const std::vector<std::string>& args) {
         try {
-            // Init always happens at the current path
             nova::core::Repository::init(std::filesystem::current_path());
             std::cout << "[SUCCESS] Initialized NovaVCS repository.\n";
             return 0;
@@ -49,7 +50,7 @@ int main(int argc, char** argv) {
             nova::storage::ObjectDB db(repoRoot);
             std::string hash = db.writeObject("blob", buffer.str());
             
-            // --- NEW: Update and Save the Index ---
+            // Update and Save Index
             IndexManager index(repoRoot.string());
             index.loadIndex(indexPath);
             index.addFile(filename, hash);
@@ -64,7 +65,7 @@ int main(int argc, char** argv) {
         }
     }, "Add file contents to the Object Database (CAS)");
 
-    // Phase 3: status (The New Wiring)
+    // Phase 3: status
     cli.registerCommand("status", [](const std::vector<std::string>& args) {
         try {
             auto repoOpt = nova::core::Repository::discover(std::filesystem::current_path());
@@ -76,8 +77,6 @@ int main(int argc, char** argv) {
             std::string indexPath = (repoRoot / ".nova" / "index").string();
             
             IndexManager index(repoRoot.string());
-            
-            // --- NEW: Load the Index before scanning ---
             index.loadIndex(indexPath);
             
             auto status = index.generateStatus();
@@ -118,6 +117,69 @@ int main(int argc, char** argv) {
             return 1;
         }
     }, "Show the working tree status");
+
+    // Phase 4: commit
+    cli.registerCommand("commit", [](const std::vector<std::string>& args) {
+        bool amend = false;
+        std::string message;
+
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (args[i] == "--amend") {
+                amend = true;
+            } else if (args[i] == "-m" && i + 1 < args.size()) {
+                message = args[++i];
+            }
+        }
+
+        if (message.empty()) {
+            nova::core::Logger::error("Usage: nova commit [--amend] -m \"Message\"");
+            return 1;
+        }
+        
+        try {
+            auto repoOpt = nova::core::Repository::discover(std::filesystem::current_path());
+            if (!repoOpt) throw std::runtime_error("Not a nova repository.");
             
+            std::string dummyTreeOid = nova::crypto::SHA256::hash("dummy_tree_state");
+            
+            nova::core::CommitGraph graph(repoOpt->getRootPath());
+            
+            std::string oid;
+            if (amend) {
+                oid = graph.amendCommit(dummyTreeOid, message);
+            } else {
+                oid = graph.createCommit(dummyTreeOid, message, "hetronom.live");
+            }
+            
+            std::cout << "[SUCCESS] " << (amend ? "Amended" : "Created") << " commit " << oid.substr(0, 7) << "\n";
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Record changes to the repository");
+
+    // Phase 4: log
+    cli.registerCommand("log", [](const std::vector<std::string>& args) {
+        try {
+            auto repoOpt = nova::core::Repository::discover(std::filesystem::current_path());
+            if (!repoOpt) throw std::runtime_error("Not a nova repository.");
+            
+            nova::core::CommitGraph graph(repoOpt->getRootPath());
+            auto history = graph.getHistory();
+            
+            for (const auto& commit : history) {
+                std::cout << "commit " << commit.oid << "\n";
+                std::cout << "Author: " << commit.author << "\n";
+                std::cout << "Date:   " << commit.timestamp << "\n\n";
+                std::cout << "    " << commit.message << "\n\n";
+            }
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Show commit logs");
+
     return cli.parseAndRun(argc, argv);
 }
