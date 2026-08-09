@@ -204,8 +204,13 @@ void IndexManager::saveIndex(const std::string& indexPath) const {
         // Write Size
         out.write(reinterpret_cast<const char*>(&entry.size), sizeof(entry.size));
 
-        // Write MTime (Cast to integer for binary safety)
-        uint64_t mtime_val = std::chrono::duration_cast<std::chrono::seconds>(entry.mtime.time_since_epoch()).count();
+        // Write MTime as the raw clock tick count. The index is a local,
+        // platform-specific binary file, so we keep full precision here.
+        // Truncating to whole seconds lost the sub-second part of the file
+        // clock, so after a save/load round-trip the stored mtime never
+        // equalled the file's real mtime again and generateStatus() reported
+        // every unmodified file as "modified" instead of "staged".
+        int64_t mtime_val = entry.mtime.time_since_epoch().count();
         out.write(reinterpret_cast<const char*>(&mtime_val), sizeof(mtime_val));
 
         // Write Staged Flag
@@ -238,10 +243,11 @@ void IndexManager::loadIndex(const std::string& indexPath) {
         // Read Size
         in.read(reinterpret_cast<char*>(&entry.size), sizeof(entry.size));
 
-        // Read MTime
-        uint64_t mtime_val = 0;
+        // Read MTime back at full precision (raw clock ticks), so an
+        // unmodified file compares equal to its on-disk mtime after a reload.
+        int64_t mtime_val = 0;
         in.read(reinterpret_cast<char*>(&mtime_val), sizeof(mtime_val));
-        entry.mtime = std::filesystem::file_time_type(std::chrono::seconds(mtime_val));
+        entry.mtime = std::filesystem::file_time_type(std::filesystem::file_time_type::duration(mtime_val));
 
         // Read Staged Flag
         in.read(reinterpret_cast<char*>(&entry.is_staged), sizeof(entry.is_staged));
