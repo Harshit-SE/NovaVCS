@@ -23,14 +23,24 @@ public:
         }
     }
 
-    bool isIgnored(const std::string& path) const {
-        for (const auto& rule : rules) {
-            if (path.find(rule) != std::string::npos) {
+    // Make sure this is at the top of the file!
+
+// ... inside your IgnoreEngine class ...
+
+bool isIgnored(const std::string& path) const {
+    std::filesystem::path p(path);
+    
+    for (const auto& rule : rules) {
+        // Iterate through each discrete folder or file component in the path
+        for (const auto& component : p) {
+            // Only trigger if an exact component name matches the ignore rule
+            if (component.string() == rule) {
                 return true;
             }
         }
-        return false;
     }
+    return false;
+}
 
 private:
     std::vector<std::string> rules;

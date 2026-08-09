@@ -1,4 +1,6 @@
 #include "IndexManager.hpp"
+#include "nova/crypto/sha256.hpp" 
+#include <fstream>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
@@ -89,11 +91,21 @@ std::optional<IndexEntry> IndexManager::getMetadata(const std::string& path) con
     return std::nullopt;
 }
 
-std::string IndexManager::computeHashDummy(const std::string& path) const {
-    // In production, this calls your Phase 2 SHA-256 CAS engine.
-    // Returning a dummy hash based on file size for rename detection logic testing.
+std::string IndexManager::computeHashReal(const std::string& path) const {
     fs::path fullPath = fs::path(repoRoot) / path;
-    return "hash_" + std::to_string(fs::file_size(fullPath));
+    
+    std::ifstream file(fullPath, std::ios::binary);
+    if (!file.is_open()) return "";
+    
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = buffer.str();
+    
+    // --- THE FIX: Replicate the Phase 2 CAS Header ---
+    // Prepend the Git-style header ("blob " + size + null byte) before hashing
+    std::string payload = "blob " + std::to_string(content.size()) + '\0' + content;
+    
+    return nova::crypto::SHA256::hash(payload);
 }
 
 RepoStatus IndexManager::generateStatus() {
@@ -137,7 +149,7 @@ RepoStatus IndexManager::generateStatus() {
     // 3. Rename Detection Heuristic (O(N) using size/hash matching)
     std::unordered_map<std::string, std::string> untrackedHashes;
     for (auto it = status.untracked.begin(); it != status.untracked.end();) {
-        std::string hash = computeHashDummy(*it);
+        std::string hash = computeHashReal(*it);
         untrackedHashes[hash] = *it;
         ++it;
     }
@@ -161,5 +173,81 @@ RepoStatus IndexManager::generateStatus() {
 
 // Binary serialization methods omitted for brevity, but would use std::fstream 
 // to write the fastLookup map iteratively for O(1) loading.
-void IndexManager::saveIndex(const std::string& indexPath) const {}
-void IndexManager::loadIndex(const std::string& indexPath) {}
+void IndexManager::saveIndex(const std::string& indexPath) const {
+    std::ofstream out(indexPath, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) return;
+
+    // 1. Count how many valid entries we actually have
+    size_t count = 0;
+    for (const auto& [path, node] : fastLookup) {
+        if (node->entry.has_value()) count++;
+    }
+
+    // 2. Write the count to the top of the file
+    out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+
+    // 3. Serialize each entry
+    for (const auto& [path, node] : fastLookup) {
+        if (!node->entry.has_value()) continue;
+        const auto& entry = node->entry.value();
+
+        // Write Path
+        size_t pathLen = entry.path.size();
+        out.write(reinterpret_cast<const char*>(&pathLen), sizeof(pathLen));
+        out.write(entry.path.data(), pathLen);
+
+        // Write Hash
+        size_t hashLen = entry.hash.size();
+        out.write(reinterpret_cast<const char*>(&hashLen), sizeof(hashLen));
+        out.write(entry.hash.data(), hashLen);
+
+        // Write Size
+        out.write(reinterpret_cast<const char*>(&entry.size), sizeof(entry.size));
+
+        // Write MTime (Cast to integer for binary safety)
+        uint64_t mtime_val = std::chrono::duration_cast<std::chrono::seconds>(entry.mtime.time_since_epoch()).count();
+        out.write(reinterpret_cast<const char*>(&mtime_val), sizeof(mtime_val));
+
+        // Write Staged Flag
+        out.write(reinterpret_cast<const char*>(&entry.is_staged), sizeof(entry.is_staged));
+    }
+}
+
+void IndexManager::loadIndex(const std::string& indexPath) {
+    std::ifstream in(indexPath, std::ios::binary);
+    if (!in.is_open()) return;
+
+    size_t count = 0;
+    if (!in.read(reinterpret_cast<char*>(&count), sizeof(count))) return;
+
+    for (size_t i = 0; i < count; ++i) {
+        IndexEntry entry;
+        
+        // Read Path
+        size_t pathLen = 0;
+        in.read(reinterpret_cast<char*>(&pathLen), sizeof(pathLen));
+        entry.path.resize(pathLen);
+        in.read(&entry.path[0], pathLen);
+
+        // Read Hash
+        size_t hashLen = 0;
+        in.read(reinterpret_cast<char*>(&hashLen), sizeof(hashLen));
+        entry.hash.resize(hashLen);
+        in.read(&entry.hash[0], hashLen);
+
+        // Read Size
+        in.read(reinterpret_cast<char*>(&entry.size), sizeof(entry.size));
+
+        // Read MTime
+        uint64_t mtime_val = 0;
+        in.read(reinterpret_cast<char*>(&mtime_val), sizeof(mtime_val));
+        entry.mtime = std::filesystem::file_time_type(std::chrono::seconds(mtime_val));
+
+        // Read Staged Flag
+        in.read(reinterpret_cast<char*>(&entry.is_staged), sizeof(entry.is_staged));
+
+        // Insert directly into the Trie and fast lookup map
+        TrieNode* node = insertPath(entry.path);
+        node->entry = entry;
+    }
+}

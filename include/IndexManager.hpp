@@ -57,7 +57,7 @@ private:
 
     std::vector<std::string> splitPath(const std::string& path) const;
     TrieNode* insertPath(const std::string& path);
-    std::string computeHashDummy(const std::string& path) const; // Placeholder for Phase 2 CAS hook
+    std::string computeHashReal(const std::string& path) const; // Placeholder for Phase 2 CAS hook
 };
 
 #endif // NOVA_INDEX_MANAGER_HPP
