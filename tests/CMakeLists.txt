@@ -14,6 +14,7 @@ add_executable(nova_tests
     unit/test_cli.cpp 
     unit/test_storage.cpp  
     test_index_manager.cpp
+    test_branch_manager.cpp
 )
 target_link_libraries(nova_tests PRIVATE nova_core gtest_main)
 

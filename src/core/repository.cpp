@@ -45,17 +45,20 @@ Repository Repository::init(const std::filesystem::path& path) {
 }
 
 std::optional<Repository> Repository::discover(const std::filesystem::path& start_path) {
-    auto current = std::filesystem::absolute(start_path);
-    while (true) {
-        if (utils::FSUtils::exists(current / ".nova")) {
-            return Repository(current);
-        }
-        if (current == current.parent_path()) {
-            break; // Root reached
+    auto current = start_path;
+    while (current != current.root_path()) {
+        if (std::filesystem::exists(current / ".nova")) {
+            return Repository(current); // Found it, return the instantiated Repository
         }
         current = current.parent_path();
     }
-    return std::nullopt;
+    
+    // Check the root directory itself just in case
+    if (std::filesystem::exists(current / ".nova")) {
+        return Repository(current);
+    }
+    
+    return std::nullopt; // Not found
 }
 
 }

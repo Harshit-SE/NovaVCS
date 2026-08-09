@@ -4,6 +4,7 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -38,11 +39,28 @@ TrieNode* IndexManager::insertPath(const std::string& path) {
     return current;
 }
 
-void IndexManager::addFile(const std::string& path, const std::string& hash) {
+std::string IndexManager::computeHashReal(const std::string& path) const {
+    fs::path fullPath = fs::path(repoRoot) / path;
+    
+    std::ifstream file(fullPath, std::ios::binary);
+    if (!file.is_open()) return "";
+    
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = buffer.str();
+    
+    std::string payload = "blob " + std::to_string(content.size()) + '\0' + content;
+    return nova::crypto::SHA256::hash(payload);
+}
+
+void IndexManager::addFile(const std::string& path) {
     if (ignoreEngine.isIgnored(path)) return;
 
     fs::path fullPath = fs::path(repoRoot) / path;
     if (!fs::exists(fullPath)) return;
+
+    std::string hash = computeHashReal(path);
+    if (hash.empty()) return;
 
     TrieNode* node = insertPath(path);
     IndexEntry entry;
@@ -67,11 +85,11 @@ void IndexManager::stageFile(const std::string& path) {
     auto it = fastLookup.find(path);
     if (it != fastLookup.end() && it->second->entry) {
         it->second->entry->is_staged = true;
-        // Update mtime and size in case it was modified
         fs::path fullPath = fs::path(repoRoot) / path;
         if (fs::exists(fullPath)) {
             it->second->entry->size = fs::file_size(fullPath);
             it->second->entry->mtime = fs::last_write_time(fullPath);
+            it->second->entry->hash = computeHashReal(path);
         }
     }
 }
@@ -91,33 +109,14 @@ std::optional<IndexEntry> IndexManager::getMetadata(const std::string& path) con
     return std::nullopt;
 }
 
-std::string IndexManager::computeHashReal(const std::string& path) const {
-    fs::path fullPath = fs::path(repoRoot) / path;
-    
-    std::ifstream file(fullPath, std::ios::binary);
-    if (!file.is_open()) return "";
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    
-    // --- THE FIX: Replicate the Phase 2 CAS Header ---
-    // Prepend the Git-style header ("blob " + size + null byte) before hashing
-    std::string payload = "blob " + std::to_string(content.size()) + '\0' + content;
-    
-    return nova::crypto::SHA256::hash(payload);
-}
-
 RepoStatus IndexManager::generateStatus() {
     RepoStatus status;
     std::unordered_map<std::string, bool> diskFiles;
 
-    // 1. Scan Working Directory
     for (const auto& entry : fs::recursive_directory_iterator(repoRoot)) {
         if (entry.is_directory()) continue;
         
         std::string relPath = fs::relative(entry.path(), repoRoot).string();
-        // Standardize separators for Windows/Linux consistency
         std::replace(relPath.begin(), relPath.end(), '\\', '/');
 
         if (ignoreEngine.isIgnored(relPath)) continue;
@@ -139,81 +138,85 @@ RepoStatus IndexManager::generateStatus() {
         }
     }
 
-    // 2. Scan Index for Deleted Files
     for (const auto& [path, node] : fastLookup) {
         if (node->entry.has_value() && diskFiles.find(path) == diskFiles.end()) {
             status.deleted.push_back(path);
         }
     }
 
-    // 3. Rename Detection Heuristic (O(N) using size/hash matching)
     std::unordered_map<std::string, std::string> untrackedHashes;
-    for (auto it = status.untracked.begin(); it != status.untracked.end();) {
-        std::string hash = computeHashReal(*it);
-        untrackedHashes[hash] = *it;
-        ++it;
-    }
-
-    for (auto it = status.deleted.begin(); it != status.deleted.end();) {
-        std::string deletedHash = fastLookup[*it]->entry->hash;
-        if (untrackedHashes.find(deletedHash) != untrackedHashes.end()) {
-            std::string newPath = untrackedHashes[deletedHash];
-            status.renamed.push_back({*it, newPath});
-            
-            // Remove from untracked and deleted since it's a rename
-            status.untracked.erase(std::remove(status.untracked.begin(), status.untracked.end(), newPath), status.untracked.end());
-            it = status.deleted.erase(it);
-        } else {
-            ++it;
+    for (const auto& file : status.untracked) {
+        std::string hash = computeHashReal(file);
+        if (!hash.empty()) {
+            untrackedHashes[hash] = file;
         }
     }
+
+    std::vector<std::string> newDeleted;
+    std::unordered_set<std::string> renamedUntrackedFiles;
+
+    for (const auto& deletedPath : status.deleted) {
+        auto lookupIt = fastLookup.find(deletedPath);
+        
+        if (lookupIt == fastLookup.end() || lookupIt->second == nullptr || !lookupIt->second->entry.has_value()) {
+            newDeleted.push_back(deletedPath);
+            continue;
+        }
+        
+        std::string deletedHash = lookupIt->second->entry->hash;
+        
+        if (!deletedHash.empty() && untrackedHashes.find(deletedHash) != untrackedHashes.end()) {
+            std::string newPath = untrackedHashes[deletedHash];
+            status.renamed.push_back({deletedPath, newPath});
+            
+            renamedUntrackedFiles.insert(newPath);
+            untrackedHashes.erase(deletedHash); 
+        } else {
+            newDeleted.push_back(deletedPath);
+        }
+    }
+
+    std::vector<std::string> newUntracked;
+    for (const auto& file : status.untracked) {
+        if (renamedUntrackedFiles.find(file) == renamedUntrackedFiles.end()) {
+            newUntracked.push_back(file);
+        }
+    }
+
+    status.deleted = newDeleted;
+    status.untracked = newUntracked;
 
     return status;
 }
 
-// Binary serialization methods omitted for brevity, but would use std::fstream 
-// to write the fastLookup map iteratively for O(1) loading.
 void IndexManager::saveIndex(const std::string& indexPath) const {
     std::ofstream out(indexPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open()) return;
 
-    // 1. Count how many valid entries we actually have
     size_t count = 0;
     for (const auto& [path, node] : fastLookup) {
         if (node->entry.has_value()) count++;
     }
 
-    // 2. Write the count to the top of the file
     out.write(reinterpret_cast<const char*>(&count), sizeof(count));
 
-    // 3. Serialize each entry
     for (const auto& [path, node] : fastLookup) {
         if (!node->entry.has_value()) continue;
         const auto& entry = node->entry.value();
 
-        // Write Path
         size_t pathLen = entry.path.size();
         out.write(reinterpret_cast<const char*>(&pathLen), sizeof(pathLen));
         out.write(entry.path.data(), pathLen);
 
-        // Write Hash
         size_t hashLen = entry.hash.size();
         out.write(reinterpret_cast<const char*>(&hashLen), sizeof(hashLen));
         out.write(entry.hash.data(), hashLen);
 
-        // Write Size
         out.write(reinterpret_cast<const char*>(&entry.size), sizeof(entry.size));
 
-        // Write MTime as the raw clock tick count. The index is a local,
-        // platform-specific binary file, so we keep full precision here.
-        // Truncating to whole seconds lost the sub-second part of the file
-        // clock, so after a save/load round-trip the stored mtime never
-        // equalled the file's real mtime again and generateStatus() reported
-        // every unmodified file as "modified" instead of "staged".
-        int64_t mtime_val = entry.mtime.time_since_epoch().count();
+        uint64_t mtime_val = entry.mtime.time_since_epoch().count();
         out.write(reinterpret_cast<const char*>(&mtime_val), sizeof(mtime_val));
 
-        // Write Staged Flag
         out.write(reinterpret_cast<const char*>(&entry.is_staged), sizeof(entry.is_staged));
     }
 }
@@ -228,31 +231,24 @@ void IndexManager::loadIndex(const std::string& indexPath) {
     for (size_t i = 0; i < count; ++i) {
         IndexEntry entry;
         
-        // Read Path
         size_t pathLen = 0;
         in.read(reinterpret_cast<char*>(&pathLen), sizeof(pathLen));
         entry.path.resize(pathLen);
         in.read(&entry.path[0], pathLen);
 
-        // Read Hash
         size_t hashLen = 0;
         in.read(reinterpret_cast<char*>(&hashLen), sizeof(hashLen));
         entry.hash.resize(hashLen);
         in.read(&entry.hash[0], hashLen);
 
-        // Read Size
         in.read(reinterpret_cast<char*>(&entry.size), sizeof(entry.size));
 
-        // Read MTime back at full precision (raw clock ticks), so an
-        // unmodified file compares equal to its on-disk mtime after a reload.
-        int64_t mtime_val = 0;
+        uint64_t mtime_val = 0;
         in.read(reinterpret_cast<char*>(&mtime_val), sizeof(mtime_val));
         entry.mtime = std::filesystem::file_time_type(std::filesystem::file_time_type::duration(mtime_val));
 
-        // Read Staged Flag
         in.read(reinterpret_cast<char*>(&entry.is_staged), sizeof(entry.is_staged));
 
-        // Insert directly into the Trie and fast lookup map
         TrieNode* node = insertPath(entry.path);
         node->entry = entry;
     }

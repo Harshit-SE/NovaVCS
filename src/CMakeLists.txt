@@ -12,6 +12,7 @@ add_library(nova_core
     IndexManager.cpp
     core/commit.cpp
     core/commit_graph.cpp
+    core/branch_manager.cpp
 )
 
 
