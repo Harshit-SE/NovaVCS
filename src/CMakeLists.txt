@@ -13,6 +13,8 @@ add_library(nova_core
     core/commit.cpp
     core/commit_graph.cpp
     core/branch_manager.cpp
+    core/diff_engine.cpp
+    core/merge_engine.cpp
 )
 
 

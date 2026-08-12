@@ -5,6 +5,8 @@
 #include "nova/crypto/sha256.hpp"
 #include "nova/core/commit_graph.hpp"
 #include "nova/core/branch_manager.hpp"
+#include "nova/core/diff_engine.hpp" 
+#include "nova/core/merge_engine.hpp" // Phase 7: Merge Engine
 #include "IndexManager.hpp" 
 #include <iostream>
 #include <filesystem>
@@ -27,7 +29,6 @@ int main(int argc, char** argv) {
     }, "Initialize a new NovaVCS repository");
 
     // Phase 2: add
-   // Phase 2: add
     cli.registerCommand("add", [](const std::vector<std::string>& args) {
         if (args.empty()) {
             nova::core::Logger::error("Missing filename. Usage: nova add <file>");
@@ -52,7 +53,6 @@ int main(int argc, char** argv) {
                 db.writeObject("blob", buffer.str());
             }
             
-            // FIX: Call addFile with only the filename argument
             IndexManager index(repoRoot.string());
             index.loadIndex(indexPath);
             index.addFile(filename);
@@ -240,6 +240,106 @@ int main(int argc, char** argv) {
             return 1;
         }
     }, "Switch branches or restore working tree files");
+
+    // Phase 6: diff
+    cli.registerCommand("diff", [](const std::vector<std::string>& args) {
+        bool sideBySide = false;
+        std::vector<std::string> targets;
+
+        for (const auto& arg : args) {
+            if (arg == "--side-by-side") {
+                sideBySide = true;
+            } else {
+                targets.push_back(arg);
+            }
+        }
+
+        if (targets.size() != 2) {
+            nova::core::Logger::error("Usage: nova diff [--side-by-side] <old_path> <new_path>");
+            return 1;
+        }
+
+        try {
+            std::filesystem::path oldPath(targets[0]);
+            std::filesystem::path newPath(targets[1]);
+
+            if (std::filesystem::is_directory(oldPath) && std::filesystem::is_directory(newPath)) {
+                nova::diff::DiffEngine::diffDirectories(oldPath, newPath);
+            } else if (std::filesystem::is_regular_file(oldPath) && std::filesystem::is_regular_file(newPath)) {
+                auto result = nova::diff::DiffEngine::diffFiles(oldPath, newPath);
+                
+                if (sideBySide) {
+                    nova::diff::DiffEngine::printSideBySideDiff(result);
+                } else {
+                    nova::diff::DiffEngine::printColoredDiff(result);
+                }
+            } else {
+                nova::core::Logger::error("Mismatched types: Both targets must be either files or directories.");
+                return 1;
+            }
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Show changes between two files or directories");
+
+    // Phase 7: merge
+    cli.registerCommand("merge", [](const std::vector<std::string>& args) {
+        bool preview = false;
+        std::vector<std::string> targets;
+
+        for (const auto& arg : args) {
+            if (arg == "--preview") {
+                preview = true;
+            } else {
+                targets.push_back(arg);
+            }
+        }
+
+        // We need at least base, ours, and theirs for a preview.
+        if (targets.size() < 3) {
+            nova::core::Logger::error("Usage: nova merge [--preview] <base_file> <our_file> <their_file> [output_file]");
+            return 1;
+        }
+
+        try {
+            std::filesystem::path baseFile(targets[0]);
+            std::filesystem::path ourFile(targets[1]);
+            std::filesystem::path theirFile(targets[2]);
+
+            if (preview) {
+                auto readFile = [](const std::filesystem::path& p) -> std::string {
+                    std::ifstream file(p);
+                    std::stringstream buffer;
+                    buffer << file.rdbuf();
+                    return buffer.str();
+                };
+                
+                std::cout << "\n--- Merge Preview ---\n";
+                nova::merge::MergeEngine::previewMerge(readFile(baseFile), readFile(ourFile), readFile(theirFile));
+            } else {
+                // If not previewing, we require an output file
+                if (targets.size() < 4) {
+                    nova::core::Logger::error("Missing output file. Usage: nova merge <base_file> <our_file> <their_file> <output_file>");
+                    return 1;
+                }
+                
+                std::filesystem::path outputFile(targets[3]);
+                bool clean = nova::merge::MergeEngine::mergeFiles(baseFile, ourFile, theirFile, outputFile);
+                
+                if (clean) {
+                    std::cout << "[SUCCESS] Merge completed cleanly. Output saved to " << outputFile << "\n";
+                } else {
+                    std::cout << "\033[33m[WARNING] Merge completed with conflicts. Check " << outputFile << " for conflict markers.\033[0m\n";
+                }
+            }
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Perform a three-way file merge");
 
     return cli.parseAndRun(argc, argv);
 }
