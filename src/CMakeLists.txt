@@ -16,6 +16,7 @@ add_library(nova_core
     core/diff_engine.cpp
     core/merge_engine.cpp
     core/search_engine.cpp
+    compression/compression_engine.cpp
 )
 
 

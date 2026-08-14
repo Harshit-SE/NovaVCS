@@ -18,6 +18,7 @@ add_executable(nova_tests
     benchmarks/benchmark_diff.cpp
     core/merge_engine_test.cpp
     benchmarks/benchmark_search.cpp
+    benchmarks/benchmark_compression.cpp
 )
 target_link_libraries(nova_tests PRIVATE nova_core gtest_main)
 

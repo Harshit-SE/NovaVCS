@@ -7,7 +7,8 @@
 #include "nova/core/branch_manager.hpp"
 #include "nova/core/diff_engine.hpp" 
 #include "nova/core/merge_engine.hpp" 
-#include "nova/core/search_engine.hpp" // Phase 8: Search Engine
+#include "nova/core/search_engine.hpp" 
+#include "nova/compression/compression_engine.hpp"
 #include "IndexManager.hpp" 
 #include <iostream>
 #include <filesystem>
@@ -412,6 +413,26 @@ int main(int argc, char** argv) {
             return 1;
         }
     }, "Search the repository using prefix, content, exact, or fuzzy matching");
+    
+    // Phase 9: pack
+    cli.registerCommand("pack", [](const std::vector<std::string>& args) {
+        try {
+            auto repoOpt = nova::core::Repository::discover(std::filesystem::current_path());
+            if (!repoOpt) {
+                nova::core::Logger::error("fatal: not a nova repository");
+                return 1;
+            }
+            
+            std::cout << "Analyzing loose objects for compression...\n";
+            auto metrics = nova::compression::PackManager::packObjects(repoOpt->getRootPath());
+            nova::compression::CompressionAnalyzer::printReport(metrics);
+            
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Compress loose objects into a packfile");
 
     return cli.parseAndRun(argc, argv);
 }
