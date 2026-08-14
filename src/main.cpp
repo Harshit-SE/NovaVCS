@@ -9,6 +9,7 @@
 #include "nova/core/merge_engine.hpp" 
 #include "nova/core/search_engine.hpp" 
 #include "nova/compression/compression_engine.hpp"
+#include "nova/analytics/analytics_engine.hpp"
 #include "IndexManager.hpp" 
 #include <iostream>
 #include <filesystem>
@@ -433,6 +434,29 @@ int main(int argc, char** argv) {
             return 1;
         }
     }, "Compress loose objects into a packfile");
+    
+    // Phase 10: analyze
+    cli.registerCommand("analyze", [](const std::vector<std::string>& args) {
+        try {
+            auto repoOpt = nova::core::Repository::discover(std::filesystem::current_path());
+            if (!repoOpt) {
+                nova::core::Logger::error("fatal: not a nova repository");
+                return 1;
+            }
+            
+            std::cout << "[INFO] Compiling Repository Analytics...\n\n";
+            
+            auto stats = nova::analytics::AnalyticsEngine::analyzeRepository(repoOpt->getRootPath());
+            
+            // Output JSON for external consumption or terminal viewing
+            std::cout << stats.toJSON() << "\n";
+            
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Output repository analytics and metrics as a JSON payload");
 
     return cli.parseAndRun(argc, argv);
 }

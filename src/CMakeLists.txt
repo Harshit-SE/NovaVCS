@@ -17,6 +17,7 @@ add_library(nova_core
     core/merge_engine.cpp
     core/search_engine.cpp
     compression/compression_engine.cpp
+    analytics/analytics_engine.cpp
 )
 
 
