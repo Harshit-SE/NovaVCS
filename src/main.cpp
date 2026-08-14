@@ -6,7 +6,8 @@
 #include "nova/core/commit_graph.hpp"
 #include "nova/core/branch_manager.hpp"
 #include "nova/core/diff_engine.hpp" 
-#include "nova/core/merge_engine.hpp" // Phase 7: Merge Engine
+#include "nova/core/merge_engine.hpp" 
+#include "nova/core/search_engine.hpp" // Phase 8: Search Engine
 #include "IndexManager.hpp" 
 #include <iostream>
 #include <filesystem>
@@ -297,7 +298,6 @@ int main(int argc, char** argv) {
             }
         }
 
-        // We need at least base, ours, and theirs for a preview.
         if (targets.size() < 3) {
             nova::core::Logger::error("Usage: nova merge [--preview] <base_file> <our_file> <their_file> [output_file]");
             return 1;
@@ -319,7 +319,6 @@ int main(int argc, char** argv) {
                 std::cout << "\n--- Merge Preview ---\n";
                 nova::merge::MergeEngine::previewMerge(readFile(baseFile), readFile(ourFile), readFile(theirFile));
             } else {
-                // If not previewing, we require an output file
                 if (targets.size() < 4) {
                     nova::core::Logger::error("Missing output file. Usage: nova merge <base_file> <our_file> <their_file> <output_file>");
                     return 1;
@@ -340,6 +339,79 @@ int main(int argc, char** argv) {
             return 1;
         }
     }, "Perform a three-way file merge");
+
+    // Phase 8: search
+    cli.registerCommand("search", [](const std::vector<std::string>& args) {
+        if (args.size() < 2) {
+            nova::core::Logger::error("Usage: nova search <type> <query>\nTypes: --prefix, --content, --exact, --fuzzy");
+            return 1;
+        }
+
+        std::string type = args[0];
+        std::string query = args[1];
+
+        try {
+            auto repoOpt = nova::core::Repository::discover(std::filesystem::current_path());
+            if (!repoOpt) throw std::runtime_error("Not a nova repository.");
+
+            std::filesystem::path repoRoot = repoOpt->getRootPath();
+            nova::search::SearchEngine engine;
+            std::cout << "[INFO] Building on-the-fly search index...\n";
+            
+            // Index all regular files (ignoring the .nova directory)
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(repoRoot)) {
+                if (entry.is_regular_file() && entry.path().string().find(".nova") == std::string::npos) {
+                    std::ifstream file(entry.path());
+                    std::stringstream buffer;
+                    buffer << file.rdbuf();
+                    engine.indexFile(std::filesystem::relative(entry.path(), repoRoot).string(), buffer.str());
+                }
+            }
+
+            // Index commits from the graph
+            nova::core::CommitGraph graph(repoRoot);
+            auto history = graph.getHistory();
+            for (const auto& commit : history) {
+                engine.indexCommit(commit.oid, commit.message);
+            }
+
+            // Index branches
+            nova::core::BranchManager bm(repoRoot);
+            for (const auto& branch : bm.listBranches()) {
+                engine.indexBranch(branch);
+            }
+
+            // Execute Query
+            std::vector<std::string> results;
+            if (type == "--prefix") {
+                results = engine.prefixSearch(query);
+            } else if (type == "--content") {
+                results = engine.contentSearch(query);
+            } else if (type == "--exact") {
+                results = engine.exactSearch(query);
+            } else if (type == "--fuzzy") {
+                results = engine.fuzzySearch(query, 2); // Default Levenshtein distance of 2
+            } else {
+                nova::core::Logger::error("Unknown search type: " + type);
+                return 1;
+            }
+
+            std::cout << "\n--- Search Results for '" << query << "' ---\n";
+            if (results.empty()) {
+                std::cout << "No matches found.\n";
+            } else {
+                for (const auto& res : results) {
+                    std::cout << " -> " << res << "\n";
+                }
+                std::cout << "\nTotal found: " << results.size() << "\n";
+            }
+
+            return 0;
+        } catch (const std::exception& e) {
+            nova::core::Logger::error(e.what());
+            return 1;
+        }
+    }, "Search the repository using prefix, content, exact, or fuzzy matching");
 
     return cli.parseAndRun(argc, argv);
 }

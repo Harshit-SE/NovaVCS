@@ -15,6 +15,7 @@ add_library(nova_core
     core/branch_manager.cpp
     core/diff_engine.cpp
     core/merge_engine.cpp
+    core/search_engine.cpp
 )
 
 

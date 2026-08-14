@@ -1,5 +1,8 @@
+<<<<<<< HEAD
 Here is the complete `README.md` file for your repository. It covers the architecture, the features from all seven phases, build instructions, and the CLI commands.
 
+=======
+>>>>>>> f803a96 (feat: Implement Phase 8 Search Engine and update README)
 ```markdown
 # NovaVCS
 
@@ -18,6 +21,10 @@ NovaVCS is being developed in structured phases. The core engine manages file hi
 *   **Phase 5: Branch Manager** - Lightweight references, checkout mechanisms, and detached HEAD states.
 *   **Phase 6: Diff Engine** - Highly optimized $O(ND)$ Myers Diff algorithm with rolling hash line comparisons, supporting side-by-side and colored terminal outputs.
 *   **Phase 7: Merge Engine** - Three-way merge resolution with conflict detection. Serializes conflict states into structured JSON payloads specifically designed for external AI-agent integration.
+<<<<<<< HEAD
+=======
+*   **Phase 8: Search Engine** - High-performance indexing using a Trie (prefix matching), Inverted Index (content search), and Levenshtein Automata (fuzzy search).
+>>>>>>> f803a96 (feat: Implement Phase 8 Search Engine and update README)
 
 ---
 
@@ -69,14 +76,24 @@ Use the compiled `nova` binary to manage your local repositories.
 | `checkout` | Switches branches or restores files | `nova checkout feature-ui` |
 | `diff` | Shows line-level differences | `nova diff --side-by-side v1.txt v2.txt` |
 | `merge` | Performs a three-way file merge | `nova merge base ours theirs out.txt` |
+<<<<<<< HEAD
+=======
+| `search` | Queries the repo (prefix, content, exact, fuzzy) | `nova search --content postgres` |
+>>>>>>> f803a96 (feat: Implement Phase 8 Search Engine and update README)
 
 ---
 
 ## Roadmap
 
+<<<<<<< HEAD
 * **Phase 8:** Network Protocol Engine (TCP/IP synchronization for `push` and `fetch`).
 * **Phase 9:** Garbage Collection & Packfiles (Repository compression and memory management).
 * **Phase 10:** Web Dashboard Integration (Connecting the C++ backend to a PERN stack infrastructure).
+=======
+* **Phase 9:** Network Protocol Engine (TCP/IP synchronization for `push` and `fetch`).
+* **Phase 10:** Garbage Collection & Packfiles (Repository compression and memory management).
+* **Phase 11:** Web Dashboard Integration (Connecting the C++ backend to a PERN stack infrastructure).
+>>>>>>> f803a96 (feat: Implement Phase 8 Search Engine and update README)
 
 ```
 
